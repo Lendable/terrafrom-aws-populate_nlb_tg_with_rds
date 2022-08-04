@@ -24,6 +24,13 @@ logger.info("NLB_TG_ARN is %s." % nlb_tg_arn)
 
 max_lookup_per_invocation = int(os.getenv('MAX_LOOKUP_PER_INVOCATION', '10'))
 logger.info("MAX_LOOKUP_PER_INVOCATION is %s." % max_lookup_per_invocation)
+
+ip_change_cloudwatch_metric_namespace = os.getenv('IP_CHANGE_CLOUDWATCH_METRIC_NAMESPACE', '')
+logger.info("IP_CHANGE_CLOUDWATCH_METRIC_NAMESPACE is %s." % ip_change_cloudwatch_metric_namespace)
+
+ip_change_cloudwatch_metric_name = os.getenv('IP_CHANGE_CLOUDWATCH_METRIC_NAME', '')
+logger.info("IP_CHANGE_CLOUDWATCH_METRIC_NAME is %s." % ip_change_cloudwatch_metric_name)
+
 debugmode = False
 
 def init():
@@ -31,9 +38,35 @@ def init():
     aws_region     = os.getenv('AWS_REGION', 'us-east-1')
 
     global elbv2
+    global cloudwatch_client
     logger.info("-----> Connecting to region \"%s\"", aws_region)
     elbv2 = boto3.client("elbv2", region_name=aws_region)
+    cloudwatch_client = boto3.client("cloudwatch", region_name=aws_region)
     logger.info("-----> Connected to region \"%s\"", aws_region)
+
+
+def send_metric_when_ip_changes():
+    """
+    Sends a metric to the corresponding namespace/metricname, letting us know that
+    the ip of the target group has changed.
+    """
+    try:
+        cloudwatch_client.put_metric_data(
+            Namespace=ip_change_cloudwatch_metric_namespace,
+            MetricData=[
+                {
+                    'MetricName': ip_change_cloudwatch_metric_name,
+                    'Dimensions': [],
+                    'Value': 1,
+                    'Unit': 'Count'
+                },
+            ]
+        )
+    except ClientError as e:
+        logger.exception(
+            f"CW put metric error for {ip_change_cloudwatch_metric_namespace} -- {ip_change_cloudwatch_metric_namespace} "
+            f"CW put metric error: {e}"
+        )
 
 def debugout(module, data):
     if debugmode:
@@ -249,6 +282,7 @@ def handler(event, context):
             oldtargetIds = list(ip_from_target_group_set)
             old_targets_list = [dict(Id=target_id) for target_id in oldtargetIds]
             deregister_target(nlb_tg_arn, old_targets_list)
+            send_metric_when_ip_changes()
     else:
         logger.info(f"target group already has IP : {targetIds[0]}")
 
